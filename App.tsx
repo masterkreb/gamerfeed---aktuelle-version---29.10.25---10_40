@@ -1,5 +1,3 @@
-
-
 import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { Header } from './components/Header';
 import { FilterBar } from './components/FilterBar';
@@ -7,14 +5,16 @@ import { ArticleCard } from './components/ArticleCard';
 import { getPrimaryNewsArticles, getSecondaryNewsArticles, getOgImageFromUrl } from './services/newsService';
 import { useLocalStorage } from './hooks/useLocalStorage';
 import type { Article, Theme, ViewMode, CachedNews } from './types';
-import { LoadingSpinner, SearchIcon, FilterIcon, ResetIcon } from './components/Icons';
+import { LoadingSpinner, SearchIcon, FilterIcon, ResetIcon, NewspaperIcon, BookmarkIcon, StarIcon, ArrowLeftIcon } from './components/Icons';
 import { FilterProvider, useFilter } from './contexts/FilterContext';
 import { Footer } from './components/Footer';
 import { ScrollToTopButton } from './components/ScrollToTopButton';
 import { FavoritesHeader } from './components/FavoritesHeader';
 import { SettingsModal } from './components/SettingsModal';
+import ErrorBoundary from './components/ErrorBoundary';
 
 const ARTICLES_PER_PAGE = 32;
+const BACKGROUND_REFRESH_INTERVAL = 15 * 60 * 1000; // 15 minutes
 
 type ToastType = 'info' | 'success';
 
@@ -59,7 +59,10 @@ const SearchResultsHeader: React.FC<{
     const scopeText = isSearchingFavorites ? ' in your favorites' : '';
 
     return (
-        <div className={`mt-6 p-4 ${themeClasses.bg} border-l-4 ${themeClasses.border} rounded-r-lg flex flex-col sm:flex-row justify-between items-start sm:items-center gap-2 animate-fade-in`}>
+        <div
+            role="status"
+            aria-live="polite"
+            className={`mt-6 p-4 ${themeClasses.bg} border-l-4 ${themeClasses.border} rounded-r-lg flex flex-col sm:flex-row justify-between items-start sm:items-center gap-2 animate-fade-in`}>
             <div className="flex items-center gap-3">
                 <SearchIcon className={`w-6 h-6 ${themeClasses.icon}`} />
                 <div>
@@ -75,7 +78,7 @@ const SearchResultsHeader: React.FC<{
             </div>
             <button
                 onClick={onClear}
-                className={`font-semibold underline text-sm ${themeClasses.text} ${themeClasses.buttonHover} transition-colors sm:ml-auto`}
+                className={`font-semibold underline text-sm p-2 -m-2 rounded-lg ${themeClasses.text} ${themeClasses.buttonHover} transition-colors sm:ml-auto`}
             >
                 Clear Search
             </button>
@@ -96,6 +99,7 @@ const AppContent: React.FC = () => {
     const [isScraping, setIsScraping] = useState<boolean>(false);
     const [error, setError] = useState<string | null>(null);
     const [page, setPage] = useState(1);
+    const [newArticlesCount, setNewArticlesCount] = useState(0);
 
     const [allSources, setAllSources] = useState<{ name: string; language: 'de' | 'en' }[]>([]);
     const [scrapingProgress, setScrapingProgress] = useState<number>(0);
@@ -107,6 +111,8 @@ const AppContent: React.FC = () => {
     const isInitialLoad = useRef(true);
     const articlesRef = useRef(articles);
     articlesRef.current = articles;
+    const lastVisitTimestamp = useRef<number>(0);
+
 
     const CACHE_KEY = 'gaming_news_cache';
     const CACHE_DURATION = 5 * 60 * 1000; // 5 minutes
@@ -127,7 +133,7 @@ const AppContent: React.FC = () => {
         const articleMap = new Map();
         newArticles.forEach(a => articleMap.set(a.id, a));
         const deduplicatedArticles = Array.from(articleMap.values());
-
+        
         const finalArticles = deduplicatedArticles
             .filter(article => new Date(article.publicationDate).getTime() >= sevenDaysAgo)
             .sort((a, b) => new Date(b.publicationDate).getTime() - new Date(a.publicationDate).getTime());
@@ -136,6 +142,11 @@ const AppContent: React.FC = () => {
             articles: finalArticles,
             timestamp: Date.now()
         }));
+
+        const unreadArticles = finalArticles.filter(
+            article => new Date(article.publicationDate).getTime() > lastVisitTimestamp.current
+        );
+        setNewArticlesCount(unreadArticles.length);
 
         const availableArticleIds = new Set(finalArticles.map(a => a.id));
         setFavorites(prevFavorites => prevFavorites.filter(favId => availableArticleIds.has(favId)));
@@ -270,10 +281,79 @@ const AppContent: React.FC = () => {
             }
         }
     }, [updateArticlesAndCache, runImageScraper]);
+    
+    useEffect(() => {
+        const storedTimestamp = localStorage.getItem('lastVisitTimestamp');
+        if (storedTimestamp) {
+            lastVisitTimestamp.current = parseInt(storedTimestamp, 10);
+        } else {
+            // First visit ever: set the timestamp to now so the initial load has a count of 0.
+            const now = Date.now();
+            lastVisitTimestamp.current = now;
+            localStorage.setItem('lastVisitTimestamp', String(now));
+        }
+        
+        loadNews();
+
+    }, [loadNews]);
+
+    // Effect for periodic background refresh to update the new articles badge
+    useEffect(() => {
+        const backgroundCheckForNewArticles = async () => {
+            if (document.hidden) {
+                return; // Don't run if tab is not visible
+            }
+            try {
+                // Fetch fresh articles silently.
+                const [primary, secondary] = await Promise.all([
+                    getPrimaryNewsArticles(),
+                    getSecondaryNewsArticles(),
+                ]);
+                const newlyFetchedArticles = [...primary, ...secondary];
+                
+                // To get an accurate count, combine newly fetched articles with those already in memory
+                const articleMap = new Map<string, Article>();
+                articlesRef.current.forEach(a => articleMap.set(a.id, a));
+                newlyFetchedArticles.forEach(a => articleMap.set(a.id, a));
+                
+                const allKnownArticles = Array.from(articleMap.values());
+
+                const unreadArticles = allKnownArticles.filter(
+                    (article: Article) => new Date(article.publicationDate).getTime() > lastVisitTimestamp.current
+                );
+                
+                setNewArticlesCount(unreadArticles.length);
+
+            } catch (error) {
+                console.warn("Background check for new articles failed:", error);
+                // We don't show an error to the user for a silent background check.
+            }
+        };
+
+        const intervalId = setInterval(backgroundCheckForNewArticles, BACKGROUND_REFRESH_INTERVAL);
+
+        const handleVisibilityChange = () => {
+            if (!document.hidden) {
+                backgroundCheckForNewArticles();
+            }
+        };
+        document.addEventListener('visibilitychange', handleVisibilityChange);
+
+        return () => {
+            clearInterval(intervalId);
+            document.removeEventListener('visibilitychange', handleVisibilityChange);
+        };
+    }, []); // Runs only on mount
+
 
     useEffect(() => {
-        loadNews();
-    }, [loadNews]);
+        // Cleanup timer on component unmount to prevent memory leaks.
+        return () => {
+            if (toastTimerRef.current) {
+                window.clearTimeout(toastTimerRef.current);
+            }
+        };
+    }, []);
     
     const showToast = useCallback((message: string, type: ToastType, actions: ToastAction[] = []) => {
         if (toastTimerRef.current) {
@@ -343,7 +423,12 @@ const AppContent: React.FC = () => {
 
 
     const handleRefresh = useCallback(() => {
+        const now = Date.now();
+        localStorage.setItem('lastVisitTimestamp', String(now));
+        lastVisitTimestamp.current = now;
+        setNewArticlesCount(0);
         loadNews(true);
+
         const articlesWithPlaceholders = articlesRef.current.filter(a =>
             a.imageUrl.includes('placehold.co')
         );
@@ -370,6 +455,13 @@ const AppContent: React.FC = () => {
     }, [onResetFilters, setShowFavoritesOnly]);
 
 
+    const normalizeString = (str: string): string => {
+        return str
+            .toLowerCase()
+            .normalize('NFD') // Decompose characters into base + accent
+            .replace(/[\u0300-\u036f]/g, ''); // Remove accent characters
+    };
+
     const filteredArticles = useMemo(() => {
         let result = articles;
 
@@ -380,10 +472,10 @@ const AppContent: React.FC = () => {
         }
 
         if (searchQuery) {
-            const lowercasedQuery = searchQuery.toLowerCase();
+            const normalizedQuery = normalizeString(searchQuery);
             result = result.filter(article =>
-                article.title.toLowerCase().includes(lowercasedQuery) ||
-                article.summary.toLowerCase().includes(lowercasedQuery)
+                normalizeString(article.title).includes(normalizedQuery) ||
+                normalizeString(article.summary).includes(normalizedQuery)
             );
         }
 
@@ -457,6 +549,24 @@ const AppContent: React.FC = () => {
         return allSources.filter(s => !mutedSources.includes(s.name));
     }, [allSources, mutedSources]);
     
+    // Infinite scroll observer
+    const observer = useRef<IntersectionObserver | null>(null);
+    const lastArticleElementRef = useCallback((node: HTMLElement) => {
+        if (isBlockingLoading) return;
+        if (observer.current) observer.current.disconnect();
+
+        observer.current = new IntersectionObserver(entries => {
+            if (entries[0].isIntersecting && articlesToShow.length < filteredArticles.length) {
+                // A small delay makes the loading feel more natural and prevents rapid-fire page loads.
+                setTimeout(() => {
+                    setPage(p => p + 1);
+                }, 300);
+            }
+        });
+
+        if (node) observer.current.observe(node);
+    }, [isBlockingLoading, articlesToShow.length, filteredArticles.length]);
+    
     const viewClasses = {
         grid: 'grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6',
         list: 'flex flex-col gap-6',
@@ -465,10 +575,10 @@ const AppContent: React.FC = () => {
     
     const toastStyles: Record<ToastType, { bg: string, text: string, border: string, buttonHover: string }> = {
       info: {
-        bg: 'bg-slate-800',
+        bg: 'bg-zinc-800',
         text: 'text-white',
-        border: 'border-slate-700',
-        buttonHover: 'hover:bg-slate-700/50',
+        border: 'border-zinc-700',
+        buttonHover: 'hover:bg-zinc-700/50',
       },
       success: {
         bg: 'bg-yellow-400 dark:bg-yellow-500',
@@ -479,27 +589,55 @@ const AppContent: React.FC = () => {
     };
 
     const EmptyState = () => {
-        const areFiltersActive = timeFilter !== 'all' || sourceFilter !== 'all' || languageFilter !== 'all' || showFavoritesOnly;
+        const areFiltersActive = timeFilter !== 'all' || sourceFilter !== 'all' || languageFilter !== 'all';
 
+        // State 1: No articles found for a specific search query.
         if (searchQuery) {
             return (
-                <div className="col-span-full text-center text-slate-500 dark:text-slate-400 py-16">
-                    <SearchIcon className="w-12 h-12 mx-auto text-slate-400 mb-4" />
-                    <h3 className="text-2xl font-semibold">No articles found for "{searchQuery}"</h3>
+                <div className="col-span-full text-center text-slate-500 dark:text-zinc-400 py-16">
+                    <SearchIcon className="w-16 h-16 mx-auto text-slate-400 dark:text-zinc-500 mb-4" />
+                    <h3 className="text-2xl font-semibold text-slate-700 dark:text-zinc-200">No results for "{searchQuery}"</h3>
                     <p className="mt-2">Try checking your spelling or using different keywords.</p>
+                     <button
+                        onClick={() => setSearchQuery('')}
+                        className="mt-6 inline-flex items-center gap-2 px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 dark:focus:ring-offset-zinc-900 transition-all duration-200 hover:shadow-lg"
+                    >
+                        <ResetIcon className="w-5 h-5" />
+                        Clear Search
+                    </button>
                 </div>
             );
         }
 
-        if (areFiltersActive) {
+        // State 2: Viewing the favorites section, but no favorites have been added yet.
+        if (showFavoritesOnly && availableFavoritesCount === 0) {
             return (
-                <div className="col-span-full text-center text-slate-500 dark:text-slate-400 py-16">
-                    <FilterIcon className="w-12 h-12 mx-auto text-slate-400 mb-4" />
-                    <h3 className="text-2xl font-semibold">No Articles Match Your Filters</h3>
-                    <p className="mt-2">Try removing some filters to see more results.</p>
+                <div className="col-span-full text-center text-slate-500 dark:text-zinc-400 py-16">
+                    <BookmarkIcon className="w-16 h-16 mx-auto text-slate-400 dark:text-zinc-500 mb-4" />
+                    <h3 className="text-2xl font-semibold text-slate-700 dark:text-zinc-200">No Favorites Yet</h3>
+                    <p className="mt-2">Click the star icon <StarIcon className="w-4 h-4 inline-block text-yellow-500 fill-current"/> on an article to save it here.</p>
+                    <button
+                        onClick={() => setShowFavoritesOnly(false)}
+                        className="mt-6 inline-flex items-center gap-2 px-5 py-2.5 border border-transparent text-sm font-medium rounded-lg shadow-sm text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 dark:focus:ring-offset-zinc-900 transition-all duration-200 hover:shadow-lg"
+                    >
+                        <ArrowLeftIcon className="w-5 h-5" />
+                        Browse All Articles
+                    </button>
+                </div>
+            );
+        }
+
+        // State 3: Filters are active (time, source, language, or just being in favorites view with items) but yield no results.
+        if (areFiltersActive || showFavoritesOnly) {
+            const title = showFavoritesOnly ? "No Favorites Match Your Filters" : "No Articles Match Your Filters";
+            return (
+                <div className="col-span-full text-center text-slate-500 dark:text-zinc-400 py-16">
+                    <FilterIcon className="w-16 h-16 mx-auto text-slate-400 dark:text-zinc-500 mb-4" />
+                    <h3 className="text-2xl font-semibold text-slate-700 dark:text-zinc-200">{title}</h3>
+                    <p className="mt-2">Try adjusting your selection or reset all filters.</p>
                     <button
                         onClick={onResetFilters}
-                        className="mt-6 inline-flex items-center gap-2 px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 dark:focus:ring-offset-slate-900 transition-colors"
+                        className="mt-6 inline-flex items-center gap-2 px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 dark:focus:ring-offset-zinc-900 transition-all duration-200 hover:shadow-lg"
                     >
                         <ResetIcon className="w-5 h-5" />
                         Reset Filters
@@ -507,10 +645,12 @@ const AppContent: React.FC = () => {
                 </div>
             );
         }
-        
+
+        // State 4: Generic fallback - no articles loaded at all.
         return (
-            <div className="col-span-full text-center text-slate-500 dark:text-slate-400 py-16">
-                <h3 className="text-2xl font-semibold">No Articles Found</h3>
+            <div className="col-span-full text-center text-slate-500 dark:text-zinc-400 py-16">
+                <NewspaperIcon className="w-16 h-16 mx-auto text-slate-400 dark:text-zinc-500 mb-4" />
+                <h3 className="text-2xl font-semibold text-slate-700 dark:text-zinc-200">No Articles Found</h3>
                 <p className="mt-2">There are currently no articles to display. Please check back later.</p>
             </div>
         );
@@ -518,7 +658,16 @@ const AppContent: React.FC = () => {
 
 
     return (
-        <div className="min-h-screen text-slate-800 dark:text-slate-200 transition-colors duration-300 flex flex-col">
+        <div className="min-h-screen text-slate-800 dark:text-zinc-200 transition-colors duration-300 flex flex-col">
+            <a href="#main-content" className="skip-link">Skip to main content</a>
+
+            {/* Visually hidden container for screen reader announcements */}
+            <div className="sr-only" role="status" aria-live="polite" aria-atomic="true">
+                {isRefreshing && "Refreshing articles..."}
+                {isBlockingLoading && "Loading articles..."}
+                {scrapingProgress > 0 && "Updating article images..."}
+            </div>
+
             <Header
                 theme={theme}
                 setTheme={setTheme}
@@ -528,8 +677,9 @@ const AppContent: React.FC = () => {
                 onRefresh={handleRefresh}
                 onOpenSettings={() => setIsSettingsModalOpen(true)}
                 onLogoClick={handleResetApp}
+                newArticlesCount={newArticlesCount}
             />
-            <main className="container mx-auto p-4 md:p-6 flex-grow">
+            <main id="main-content" className="container mx-auto p-4 md:p-6 flex-grow">
                 <FilterBar
                     sources={availableSources}
                     favoritesCount={availableFavoritesCount}
@@ -560,10 +710,10 @@ const AppContent: React.FC = () => {
                 {scrapingProgress > 0 && (
                     <div className="my-4">
                         <div className="flex justify-between mb-1">
-                            <span className="text-sm font-medium text-slate-700 dark:text-slate-300">Updating article images...</span>
-                            <span className="text-sm font-medium text-slate-700 dark:text-slate-300">{scrapingProgress}%</span>
+                            <span className="text-sm font-medium text-slate-700 dark:text-zinc-300">Updating article images...</span>
+                            <span className="text-sm font-medium text-slate-700 dark:text-zinc-300">{scrapingProgress}%</span>
                         </div>
-                        <div className="w-full bg-slate-200 dark:bg-slate-700 rounded-full h-2.5">
+                        <div className="w-full bg-slate-200 dark:bg-zinc-700 rounded-full h-2.5">
                             <div
                                 className="bg-indigo-600 h-2.5 rounded-full transition-all duration-300 ease-out"
                                 style={{ width: `${scrapingProgress}%` }}
@@ -584,10 +734,10 @@ const AppContent: React.FC = () => {
                             </svg>
                         </div>
                         <h3 className="mt-4 text-2xl font-semibold text-red-600 dark:text-red-400">Could not load news</h3>
-                        <p className="mt-2 text-slate-600 dark:text-slate-400">{error}</p>
+                        <p className="mt-2 text-slate-600 dark:text-zinc-400">{error}</p>
                         <button
                             onClick={() => loadNews(true)}
-                            className="mt-6 inline-flex items-center gap-2 px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 dark:focus:ring-offset-slate-900 transition-colors"
+                            className="mt-6 inline-flex items-center gap-2 px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 dark:focus:ring-offset-zinc-900 transition-all duration-200 hover:shadow-lg"
                         >
                             Try Again
                         </button>
@@ -596,34 +746,28 @@ const AppContent: React.FC = () => {
                     <>
                         <div key={filterKey} className={`mt-8 ${viewClasses[viewMode]} animate-fade-in`}>
                             {articlesToShow.length > 0 ? (
-                                articlesToShow.map(article => (
-                                    <ArticleCard
-                                        key={article.id}
-                                        article={article}
-                                        viewMode={viewMode}
-                                        isFavorite={favorites.includes(article.id)}
-                                        onToggleFavorite={handleToggleFavorite}
-                                        onMuteSource={handleMuteSource}
-                                    />
-                                ))
+                                articlesToShow.map((article, index) => {
+                                    const isLastElement = articlesToShow.length === index + 1;
+                                    return (
+                                        <ArticleCard
+                                            ref={isLastElement ? lastArticleElementRef : null}
+                                            key={article.id}
+                                            article={article}
+                                            viewMode={viewMode}
+                                            isFavorite={favorites.includes(article.id)}
+                                            onToggleFavorite={handleToggleFavorite}
+                                            onMuteSource={handleMuteSource}
+                                        />
+                                    );
+                                })
                             ) : (
-                                showFavoritesOnly && !searchQuery ? (
-                                    // The FavoritesHeader provides all necessary context/messages when in favorites view.
-                                    null
-                                ) : (
-                                   <EmptyState />
-                                )
+                                <EmptyState />
                             )}
                         </div>
 
-                        {articlesToShow.length < filteredArticles.length && (
-                            <div className="mt-10 text-center">
-                                <button
-                                    onClick={() => setPage(p => p + 1)}
-                                    className="bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-3 px-8 rounded-lg shadow-md hover:shadow-lg transition-all duration-300 transform hover:scale-105 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 dark:focus:ring-offset-slate-900"
-                                >
-                                    Load More Articles
-                                </button>
+                        {articlesToShow.length > 0 && articlesToShow.length < filteredArticles.length && (
+                            <div className="flex justify-center items-center h-24 col-span-full">
+                                <LoadingSpinner className="w-8 h-8" />
                             </div>
                         )}
                     </>
@@ -641,6 +785,7 @@ const AppContent: React.FC = () => {
             {toast && (
                 <div
                     key={toast.id}
+                    role="alert"
                     className={`fixed top-6 left-1/2 -translate-x-1/2 z-50 rounded-xl shadow-lg flex items-stretch w-11/12 max-w-2xl overflow-hidden transition-all duration-600 ease-in-out ${toastStyles[toast.type].bg} ${toastStyles[toast.type].text} ${
                         toast.isExiting
                             ? 'opacity-0 scale-95'
@@ -671,9 +816,11 @@ const AppContent: React.FC = () => {
 
 const App: React.FC = () => {
     return (
-        <FilterProvider>
-            <AppContent />
-        </FilterProvider>
+        <ErrorBoundary>
+            <FilterProvider>
+                <AppContent />
+            </FilterProvider>
+        </ErrorBoundary>
     );
 };
 

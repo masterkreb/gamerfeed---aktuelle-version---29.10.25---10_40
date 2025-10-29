@@ -56,15 +56,11 @@ export const FavoritesHeader: React.FC<FavoritesHeaderProps> = ({
           <h2 className="text-lg font-semibold text-amber-800 dark:text-amber-200">
             Viewing Your Favorites
           </h2>
-          {totalFavorites === 0 ? (
-            <p className="text-sm text-amber-700 dark:text-amber-300">
-              You haven't added any favorites yet. Click the star on an article to save it here.
-            </p>
-          ) : !areFiltersActive ? (
+          {totalFavorites > 0 && !areFiltersActive && (
             <p className="text-sm text-amber-700 dark:text-amber-300">
               Showing all {totalFavorites} {totalFavorites === 1 ? 'favorite' : 'favorites'}.
             </p>
-          ) : null}
+          )}
         </div>
       </div>
       <div className="w-full sm:w-auto sm:ml-auto">

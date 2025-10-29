@@ -124,6 +124,10 @@ function stripHtmlAndTruncate(html: string, length: number = 150): string {
     if (!html) return '';
     const doc = new DOMParser().parseFromString(html, 'text/html');
 
+    // Security hardening: explicitly remove script and style tags
+    // to prevent any possibility of XSS if this function's output were ever mishandled.
+    doc.querySelectorAll('script, style').forEach(el => el.remove());
+
     // Remove any "read more" links entirely, as they are not part of the summary.
     doc.querySelectorAll('a').forEach(a => {
         const linkText = a.textContent?.toLowerCase() || '';
@@ -204,9 +208,9 @@ function extractInitialData(item: any, sourceName: string): { imageUrl: string; 
                     if (!src || src.includes('cpx.golem.de')) {
                         return false; // No src or it's a known tracking domain.
                     }
-                    // Parse width/height, defaulting to a large number if absent to avoid filtering them out.
-                    const width = parseInt(img.getAttribute('width') || '100', 10);
-                    const height = parseInt(img.getAttribute('height') || '100', 10);
+                    // Parse width/height, defaulting to 0. This way, images without dimensions are filtered out.
+                    const width = parseInt(img.getAttribute('width') || '0', 10);
+                    const height = parseInt(img.getAttribute('height') || '0', 10);
                     
                     // Ignore tiny images which are likely trackers (e.g., 1x1, 0x0).
                     if (width <= 1 || height <= 1) {
@@ -405,5 +409,10 @@ const fetchArticlesFromFeeds = async (feeds: [string, 'de' | 'en'][]): Promise<A
     return allArticles;
 };
 
-export const getPrimaryNewsArticles = (): Promise<Article[]> => fetchArticlesFromFeeds(PRIMARY_FEEDS);
-export const getSecondaryNewsArticles = (): Promise<Article[]> => fetchArticlesFromFeeds(SECONDARY_FEEDS);
+export const getPrimaryNewsArticles = (): Promise<Article[]> => {
+    return fetchArticlesFromFeeds(PRIMARY_FEEDS);
+};
+
+export const getSecondaryNewsArticles = (): Promise<Article[]> => {
+    return fetchArticlesFromFeeds(SECONDARY_FEEDS);
+};

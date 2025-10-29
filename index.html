@@ -33,6 +33,58 @@
       .animate-toast-out {
         animation: toastOut 0.5s ease-in-out;
       }
+      @keyframes popIn {
+        0% { transform: scale(0.8); opacity: 0.8; }
+        50% { transform: scale(1.2); opacity: 1; }
+        100% { transform: scale(1); opacity: 1; }
+      }
+      .animate-pop-in {
+        animation: popIn 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+      }
+      /* Added for animation stability */
+      .backface-hidden {
+        backface-visibility: hidden;
+      }
+      /* Added for Accessibility: Skip to Content Link */
+      .skip-link {
+        position: absolute;
+        width: 1px;
+        height: 1px;
+        padding: 0;
+        margin: -1px;
+        overflow: hidden;
+        clip: rect(0, 0, 0, 0);
+        white-space: nowrap;
+        border-width: 0;
+      }
+      .skip-link:focus {
+        position: fixed;
+        z-index: 100;
+        top: 1rem;
+        left: 1rem;
+        width: auto;
+        height: auto;
+        padding: 0.75rem 1.25rem;
+        margin: 0;
+        overflow: visible;
+        clip: auto;
+        white-space: normal;
+        background-color: white;
+        color: #1e293b; /* slate-800 */
+        border: 2px solid #1e293b;
+        border-radius: 0.5rem;
+        box-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.1), 0 2px 4px -2px rgb(0 0 0 / 0.1);
+        text-decoration: none;
+        font-weight: 600;
+      }
+      .dark .skip-link:focus {
+        background-color: #18181b; /* zinc-900 */
+        color: white;
+        border-color: #71717a; /* zinc-500 */
+      }
+      .body-no-scroll {
+        overflow: hidden;
+      }
     </style>
   <script type="importmap">
 {
@@ -45,7 +97,7 @@
 </script>
 <link rel="stylesheet" href="/index.css">
 </head>
-  <body class="bg-slate-100 dark:bg-slate-900">
+  <body class="bg-slate-100 dark:bg-zinc-900">
     <div id="root"></div>
     <script type="module" src="/index.tsx"></script>
   </body>
