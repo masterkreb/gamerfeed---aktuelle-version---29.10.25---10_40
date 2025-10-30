@@ -299,6 +299,8 @@ const AppContent: React.FC = () => {
 
     // Effect for periodic background refresh to update the new articles badge
     useEffect(() => {
+        // Automatic update check temporarily disabled to prevent rate-limiting during testing.
+        /*
         const backgroundCheckForNewArticles = async () => {
             if (document.hidden) {
                 return; // Don't run if tab is not visible
@@ -343,6 +345,7 @@ const AppContent: React.FC = () => {
             clearInterval(intervalId);
             document.removeEventListener('visibilitychange', handleVisibilityChange);
         };
+        */
     }, []); // Runs only on mount
 
 

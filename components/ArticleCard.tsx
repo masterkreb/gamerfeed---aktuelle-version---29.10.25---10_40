@@ -36,7 +36,6 @@ const formatPublicationDate = (date: string): string => {
         return `Yesterday at ${timeString}`;
     }
 
-    // Default for older dates
     return articleDate.toLocaleDateString(navigator.language, {
         day: '2-digit',
         month: '2-digit',
@@ -65,32 +64,83 @@ const MoreOptionsMenu: React.FC<MoreOptionsMenuProps> = ({ title, source, link, 
     const [menuView, setMenuView] = useState<'main' | 'share'>('main');
     const [copyStatus, setCopyStatus] = useState<'idle' | 'copied'>('idle');
     const [startAnimation, setStartAnimation] = useState(false);
+    const [menuPosition, setMenuPosition] = useState<'bottom' | 'top'>('bottom');
+    
     const menuRef = useRef<HTMLDivElement>(null);
     const triggerRef = useRef<HTMLButtonElement>(null);
+    const firstButtonRef = useRef<HTMLButtonElement>(null);
+    const lastButtonRef = useRef<HTMLAnchorElement | HTMLButtonElement>(null);
 
     const closeMenu = useCallback(() => {
         setIsOpen(false);
     }, [setIsOpen]);
 
-    // This handles the animation timing to fix the "flying in" bug.
+    // Calculate menu position when opening
+    useEffect(() => {
+        if (isOpen && triggerRef.current) {
+            const triggerRect = triggerRef.current.getBoundingClientRect();
+            const viewportHeight = window.innerHeight;
+            const menuHeight = 250;
+            const spaceBelow = viewportHeight - triggerRect.bottom;
+            
+            if (spaceBelow < menuHeight && triggerRect.top > menuHeight) {
+                setMenuPosition('top');
+            } else {
+                setMenuPosition('bottom');
+            }
+        }
+    }, [isOpen]);
+
+    // Focus trap and keyboard handling
     useEffect(() => {
         if (isOpen) {
-            const timer = setTimeout(() => {
-                setStartAnimation(true);
-            }, 10); // A tiny delay allows the element to be positioned before animating.
+            setTimeout(() => firstButtonRef.current?.focus(), 50);
+
+            const handleKeyDown = (e: KeyboardEvent) => {
+                if (e.key === 'Escape') {
+                    closeMenu();
+                    triggerRef.current?.focus();
+                }
+                
+                if (e.key === 'Tab') {
+                    const activeElement = document.activeElement;
+                    
+                    if (e.shiftKey) {
+                        if (activeElement === firstButtonRef.current) {
+                            e.preventDefault();
+                            lastButtonRef.current?.focus();
+                        }
+                    } else {
+                        if (activeElement === lastButtonRef.current) {
+                            e.preventDefault();
+                            firstButtonRef.current?.focus();
+                        }
+                    }
+                }
+            };
+
+            document.addEventListener('keydown', handleKeyDown);
+            return () => document.removeEventListener('keydown', handleKeyDown);
+        }
+    }, [isOpen, closeMenu, menuView]);
+
+    // Animation timing
+    useEffect(() => {
+        if (isOpen) {
+            const timer = setTimeout(() => setStartAnimation(true), 10);
             return () => clearTimeout(timer);
         } else {
             setStartAnimation(false);
         }
     }, [isOpen]);
 
-    // This handles resetting internal state after the menu is closed.
+    // Reset state after close
     useEffect(() => {
         if (!isOpen) {
             const timer = setTimeout(() => {
                 setCopyStatus('idle');
                 setMenuView('main');
-            }, 200); // Reset state after close animation (duration-300)
+            }, 200);
             return () => clearTimeout(timer);
         }
     }, [isOpen]);
@@ -144,7 +194,7 @@ const MoreOptionsMenu: React.FC<MoreOptionsMenuProps> = ({ title, source, link, 
         <>
             {isOpen && (
                 <div
-                    className="fixed inset-0 z-40 bg-black/50" // Mobile and desktop backdrop
+                    className="fixed inset-0 z-40 bg-black/50"
                     aria-hidden="true"
                     onClick={(e) => {
                         e.preventDefault();
@@ -157,6 +207,12 @@ const MoreOptionsMenu: React.FC<MoreOptionsMenuProps> = ({ title, source, link, 
                 <button
                     ref={triggerRef}
                     onClick={(e) => { e.preventDefault(); e.stopPropagation(); setIsOpen(!isOpen); }}
+                    onKeyDown={(e) => {
+                        if (e.key === 'Enter' || e.key === ' ') {
+                            e.preventDefault();
+                            setIsOpen(true);
+                        }
+                    }}
                     className={`${buttonClassName || "p-2 rounded-full transition-colors duration-200 text-slate-400 bg-black/30 hover:text-white"} ${isOpen ? 'z-50' : ''}`}
                     aria-label="More options"
                     aria-haspopup="true"
@@ -167,8 +223,10 @@ const MoreOptionsMenu: React.FC<MoreOptionsMenuProps> = ({ title, source, link, 
                 <div
                     className={`
                         fixed bottom-0 left-0 right-0 z-50
-                        md:absolute md:top-full md:right-0 md:bottom-auto md:left-auto
-                        md:mt-2 md:w-56
+                        md:absolute 
+                        ${menuPosition === 'top' ? 'md:bottom-full md:mb-2' : 'md:top-full md:mt-2'}
+                        md:right-0 md:left-auto
+                        md:w-56
                         transition-all ease-in-out
                         duration-300 md:duration-150 
                         
@@ -177,6 +235,9 @@ const MoreOptionsMenu: React.FC<MoreOptionsMenuProps> = ({ title, source, link, 
                         ${startAnimation ? 'md:opacity-100 md:scale-100' : 'md:opacity-0 md:scale-95'}
                         ${!isOpen ? 'pointer-events-none' : ''}
                     `}
+                    role="dialog"
+                    aria-modal="true"
+                    aria-hidden={!isOpen}
                 >
                     <div
                         className="
@@ -186,7 +247,6 @@ const MoreOptionsMenu: React.FC<MoreOptionsMenuProps> = ({ title, source, link, 
                             pb-[env(safe-area-inset-bottom)] md:pb-0
                         "
                     >
-                        {/* Mobile-only header for the bottom sheet */}
                         <div className="md:hidden text-center text-sm font-semibold text-slate-500 dark:text-zinc-400 border-b border-slate-200 dark:border-zinc-700 py-3">
                             Article Options
                         </div>
@@ -196,17 +256,32 @@ const MoreOptionsMenu: React.FC<MoreOptionsMenuProps> = ({ title, source, link, 
                             <div className={`transition-all duration-300 ease-in-out ${menuView === 'main' ? 'opacity-100 translate-x-0' : 'opacity-0 -translate-x-4 absolute pointer-events-none'}`}>
                                 <div className="divide-y divide-slate-200 dark:divide-zinc-600">
                                     <div className="p-2 md:p-1">
-                                        <button onClick={handleShare} className="w-full flex items-center gap-3 text-left px-3 py-3 text-base md:text-sm text-slate-700 dark:text-zinc-300 hover:bg-slate-200 hover:text-slate-900 dark:hover:bg-zinc-600 dark:hover:text-white rounded-md transition-colors">
+                                        <button 
+                                            ref={firstButtonRef}
+                                            onClick={handleShare}
+                                            tabIndex={isOpen && menuView === 'main' ? 0 : -1}
+                                            className="w-full flex items-center gap-3 text-left px-3 py-3 text-base md:text-sm text-slate-700 dark:text-zinc-300 hover:bg-slate-200 hover:text-slate-900 dark:hover:bg-zinc-600 dark:hover:text-white rounded-md transition-colors"
+                                        >
                                             <ShareIcon className="w-5 h-5 md:w-4 md:h-4" /> Share
                                         </button>
                                     </div>
                                     <div className="p-2 md:p-1">
-                                        <button onClick={handleCopy} disabled={copyStatus === 'copied'} className="w-full flex items-center gap-3 text-left px-3 py-3 text-base md:text-sm text-slate-700 dark:text-zinc-300 hover:bg-slate-200 hover:text-slate-900 dark:hover:bg-zinc-600 dark:hover:text-white rounded-md transition-colors disabled:opacity-75">
+                                        <button 
+                                            onClick={handleCopy} 
+                                            disabled={copyStatus === 'copied'}
+                                            tabIndex={isOpen && menuView === 'main' ? 0 : -1}
+                                            className="w-full flex items-center gap-3 text-left px-3 py-3 text-base md:text-sm text-slate-700 dark:text-zinc-300 hover:bg-slate-200 hover:text-slate-900 dark:hover:bg-zinc-600 dark:hover:text-white rounded-md transition-colors disabled:opacity-75"
+                                        >
                                             <CopyIcon className="w-5 h-5 md:w-4 md:h-4" /> {copyStatus === 'copied' ? 'Copied!' : 'Copy Link'}
                                         </button>
                                     </div>
                                     <div className="p-2 md:p-1">
-                                        <button onClick={handleMute} className="w-full flex items-center gap-3 text-left px-3 py-3 text-base md:text-sm text-slate-700 dark:text-zinc-300 hover:text-white hover:bg-red-500 dark:hover:text-white dark:hover:bg-red-600 rounded-md transition-colors">
+                                        <button 
+                                            ref={menuView === 'main' ? lastButtonRef as React.RefObject<HTMLButtonElement> : null}
+                                            onClick={handleMute}
+                                            tabIndex={isOpen && menuView === 'main' ? 0 : -1}
+                                            className="w-full flex items-center gap-3 text-left px-3 py-3 text-base md:text-sm text-slate-700 dark:text-zinc-300 hover:text-white hover:bg-red-500 dark:hover:text-white dark:hover:bg-red-600 rounded-md transition-colors"
+                                        >
                                             <BanIcon className="w-5 h-5 md:w-4 md:h-4" /> Mute {source}
                                         </button>
                                     </div>
@@ -217,13 +292,25 @@ const MoreOptionsMenu: React.FC<MoreOptionsMenuProps> = ({ title, source, link, 
                             <div className={`transition-all duration-300 ease-in-out ${menuView === 'share' ? 'opacity-100 translate-x-0' : 'opacity-0 translate-x-4 absolute top-0 pointer-events-none'}`}>
                                 <div className="divide-y divide-slate-200 dark:divide-zinc-600">
                                     <div className="p-2 md:p-1">
-                                        <button onClick={(e) => { e.preventDefault(); e.stopPropagation(); setMenuView('main'); }} className="w-full flex items-center gap-3 text-left px-3 py-3 text-base md:text-sm font-semibold text-slate-700 dark:text-zinc-300 hover:bg-slate-200 hover:text-slate-900 dark:hover:bg-zinc-600 dark:hover:text-white rounded-md transition-colors">
+                                        <button 
+                                            ref={menuView === 'share' ? firstButtonRef : null}
+                                            onClick={(e) => { e.preventDefault(); e.stopPropagation(); setMenuView('main'); }}
+                                            tabIndex={isOpen && menuView === 'share' ? 0 : -1}
+                                            className="w-full flex items-center gap-3 text-left px-3 py-3 text-base md:text-sm font-semibold text-slate-700 dark:text-zinc-300 hover:bg-slate-200 hover:text-slate-900 dark:hover:bg-zinc-600 dark:hover:text-white rounded-md transition-colors"
+                                        >
                                             <ArrowLeftIcon className="w-5 h-5 md:w-4 md:h-4" /> Back
                                         </button>
                                     </div>
-                                    {shareOptions.map(opt => (
+                                    {shareOptions.map((opt, index) => (
                                         <div className="p-2 md:p-1" key={opt.name}>
-                                            <a href={opt.url} target="_blank" rel="noopener noreferrer" className="w-full flex items-center gap-3 text-left px-3 py-3 text-base md:text-sm text-slate-700 dark:text-zinc-300 hover:bg-slate-200 hover:text-slate-900 dark:hover:bg-zinc-600 dark:hover:text-white rounded-md transition-colors">
+                                            <a 
+                                                ref={menuView === 'share' && index === shareOptions.length - 1 ? lastButtonRef as React.RefObject<HTMLAnchorElement> : null}
+                                                href={opt.url} 
+                                                target="_blank" 
+                                                rel="noopener noreferrer"
+                                                tabIndex={isOpen && menuView === 'share' ? 0 : -1}
+                                                className="w-full flex items-center gap-3 text-left px-3 py-3 text-base md:text-sm text-slate-700 dark:text-zinc-300 hover:bg-slate-200 hover:text-slate-900 dark:hover:bg-zinc-600 dark:hover:text-white rounded-md transition-colors"
+                                            >
                                                 <span className="w-5 flex justify-center md:w-4">{opt.icon}</span> {opt.name}
                                             </a>
                                         </div>
@@ -247,25 +334,26 @@ const ArticleCardComponent = forwardRef<HTMLElement, ArticleCardProps>(({ articl
     const prevIsFavorite = useRef(isFavorite);
 
     useEffect(() => {
-        // When the menu is open, prevent the body from scrolling to maintain focus.
         if (isMenuOpen) {
+            // FIX: Calculate scrollbar width before hiding it to prevent content shift
+            const scrollbarWidth = window.innerWidth - document.documentElement.clientWidth;
+            document.documentElement.style.setProperty('--scrollbar-width', `${scrollbarWidth}px`);
             document.body.classList.add('body-no-scroll');
         } else {
-            // When the menu is closed, restore scrolling.
             document.body.classList.remove('body-no-scroll');
+            document.documentElement.style.setProperty('--scrollbar-width', '0px');
         }
 
-        // Cleanup: Ensure scrolling is re-enabled if the component unmounts while the menu is open.
         return () => {
             document.body.classList.remove('body-no-scroll');
+            document.documentElement.style.setProperty('--scrollbar-width', '0px');
         };
     }, [isMenuOpen]);
 
     useEffect(() => {
-        // Only animate when the status changes from not favorite to favorite
         if (isFavorite && !prevIsFavorite.current) {
             setIsAnimatingFavorite(true);
-            const timer = setTimeout(() => setIsAnimatingFavorite(false), 300); // Duration of the animation
+            const timer = setTimeout(() => setIsAnimatingFavorite(false), 300);
             return () => clearTimeout(timer);
         }
         prevIsFavorite.current = isFavorite;
@@ -284,7 +372,7 @@ const ArticleCardComponent = forwardRef<HTMLElement, ArticleCardProps>(({ articl
             setAllowCardOverflow(true);
             setIsMenuOpen(true);
         } else {
-            setIsMenuOpen(false); // Start menu closing animation
+            setIsMenuOpen(false);
             menuTimerRef.current = window.setTimeout(() => {
                 setAllowCardOverflow(false);
             }, 300);
@@ -358,12 +446,12 @@ const ArticleCardComponent = forwardRef<HTMLElement, ArticleCardProps>(({ articl
                 <div className="p-4 flex-grow w-full md:w-3/4 lg:w-4/5 flex flex-col">
                     <div className="flex justify-between items-start mb-2 gap-2">
                         <div className="flex items-center gap-2 flex-wrap">
-              <span className="bg-indigo-100 dark:bg-indigo-900/50 text-indigo-600 dark:text-indigo-400 px-2 py-1 text-xs font-bold rounded flex-shrink-0">
-                {article.source}
-              </span>
+                            <span className="bg-indigo-100 dark:bg-indigo-900/50 text-indigo-600 dark:text-indigo-400 px-2 py-1 text-xs font-bold rounded flex-shrink-0">
+                                {article.source}
+                            </span>
                             <LanguageTag language={article.language} />
                         </div>
-                         <div className="flex items-center gap-1">
+                        <div className="flex items-center gap-1">
                             <button
                                 onClick={(e) => { e.preventDefault(); onToggleFavorite(article.id); }}
                                 className={`p-3 rounded-full transition-all duration-200 ${isFavorite ? favoriteActiveClass : favoriteInactiveClass}`}
@@ -389,8 +477,8 @@ const ArticleCardComponent = forwardRef<HTMLElement, ArticleCardProps>(({ articl
                         {article.summary}
                     </p>
                     <div className="mt-auto pt-2">
-                         <span className="text-sm text-slate-500 dark:text-zinc-400 flex-shrink-0">
-                           {formatPublicationDate(article.publicationDate)}
+                        <span className="text-sm text-slate-500 dark:text-zinc-400 flex-shrink-0">
+                            {formatPublicationDate(article.publicationDate)}
                         </span>
                     </div>
                 </div>
@@ -455,20 +543,13 @@ const ArticleCardComponent = forwardRef<HTMLElement, ArticleCardProps>(({ articl
 ArticleCardComponent.displayName = 'ArticleCard';
 
 const propsAreEqual = (prevProps: Readonly<ArticleCardProps>, nextProps: Readonly<ArticleCardProps>) => {
-  // This custom comparison function is a performance optimization.
-  // It prevents a card from re-rendering if its props have not meaningfully changed.
-  // For example, when another card is favorited, the `onToggleFavorite` function prop
-  // changes for all cards. Without this, every card would re-render.
-  // Here, we only check for changes that affect this specific card's appearance.
-  return (
-    prevProps.isFavorite === nextProps.isFavorite &&
-    prevProps.viewMode === nextProps.viewMode &&
-    prevProps.article.id === nextProps.article.id &&
-    prevProps.article.imageUrl === nextProps.article.imageUrl &&
-    prevProps.article.title === nextProps.article.title
-  );
+    return (
+        prevProps.isFavorite === nextProps.isFavorite &&
+        prevProps.viewMode === nextProps.viewMode &&
+        prevProps.article.id === nextProps.article.id &&
+        prevProps.article.imageUrl === nextProps.article.imageUrl &&
+        prevProps.article.title === nextProps.article.title
+    );
 };
 
-// FIX: Cast memoized component to retain forwardRef typing.
-// This corrects a TypeScript error where the `ref` prop was not recognized on the memoized component.
 export const ArticleCard = memo(ArticleCardComponent, propsAreEqual) as typeof ArticleCardComponent;
